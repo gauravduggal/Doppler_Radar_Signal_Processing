@@ -1,4 +1,4 @@
-# Doppler_Radar_RCWL-0516
+# Doppler_Radar_RCWL-0516 Signal Processing
  
 1). Connect the Arduino Pin A0 to the Doppler radar signal out
 (i.e. pin 12 of RCWL-0516) refer to https://github.com/jdesbonnet/RCWL-0516/ 
