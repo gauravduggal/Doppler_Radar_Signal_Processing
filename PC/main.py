@@ -10,8 +10,7 @@ from time import time
 import json
 import PyQt5
 
-
-def readPort(queue,radar):
+def readPort(q1,radar):
     # regex expression to read 3 or  digit numbers till \n
     regex_pattern = r"[0-9][0-9]{0,3}"
     with serial.Serial(radar.port, radar.baudrate, timeout=1) as ser:
@@ -20,70 +19,67 @@ def readPort(queue,radar):
             #byte_val = byte_array.decode('ascii')
             z = re.findall(regex_pattern, str(byte_array))
             #convert from string to integer
-            if len(z)>0:
-                val = int(z[0])
-                # add to queue
-                queue.put(val)
+            if len(z)>0 :
+              #print(z)
+              val = (5/1023)*int(z[0])
+              # add to queue
+              q1.put(val)
 
-
-def Plot(queue, radar):
-    plt.figure()
-
+def Plot(q1, radar):
+    fig = plt.figure()
     ctr = 0
     temp = 0
     start_time = time()
+    buf = []
     while True:
         if ctr == temp:
             start_time = time()
             ctr = ctr + 1
-        if not(queue.empty()):
-            if len(radar.buffer) < radar.N:
-                radar.buffer.append(queue.get())
-            else:
-                yf1 = np.multiply(radar.window, fftshift(fft(radar.buffer)) / radar.N)
-                #adding 1e-9 to avoid log10(zero) error
-                yf1 = yf1 + np.array([1e-9 * radar.N])
-                yf = 10 * np.log10(abs(yf1))
-                # ignoring frequency bin at frequency 0
-                yf[int(radar.N / 2)] = 0
-                plt.clf()
-                #print(queue.qsize())
-                plt.subplot(2, 1, 1)
-                plt.plot(radar.time_axis, np.array(radar.buffer))
-                plt.title("DOPPLER RADAR time domain output "+str(ctr))
-                plt.ylabel("Amplitude")
-                plt.xlabel("time (s)")
-                plt.ion()
-                plt.show()
-                radar.clear_buf()
-                plt.subplot(2, 1, 2)
-                plt.plot(radar.vel_axis, yf)
-                plt.title("DOPPLER RADAR frequency domain output "+str(ctr))
-                plt.ylabel("PSD")
-                plt.xlabel("velocity (m/s)")
-                # plt.draw()
-                #plt.cla()
-                plt.ion()
-                plt.xlim(radar.xlim)
-                plt.ylim(radar.ylim)
-                plt.show()
-                plt.pause(0.5)
-                print("Time for loop: " + str(time() - start_time) + " s")
-                temp = ctr
-                start_time = time()
+
+        if not(q1.empty()):
+            if q1.qsize() > (radar.STFT_nfft + 10) :
+                for i in range(radar.STFT_nfft):
+                    while len(buf) > radar.N:
+                        buf.pop(0)
+                    buf.append(q1.get())
+                if (len(buf) > radar.N):
+                    # STFT algorithm
+                    plt.subplot(3,1,1)
+                    plt.plot(radar.time_axis, np.array(buf[0:radar.N]))
+                    plt.grid()
+                    #0 to 5 V
+                    plt.ylim([0, 5])
+                    # o to buffer size in seconds
+                    plt.xlim([0, radar.ts*radar.N])
+                    plt.title("DOPPLER RADAR time domain output "+str(ctr))
+                    plt.ylabel("Amplitude (V)")
+                    plt.xlabel("time (s)")
+                    plt.ion()
+                    plt.show()
+                    plt.subplot(3, 1, 2)
+                    Pxx, freq= plt.psd(buf[0:radar.N], radar.N, radar.fs*radar.lamb/2,window=np.hamming(radar.N),
+                                       pad_to=radar.N*2, detrend='mean')
+                    plt.subplot(3, 1, 3)
+                    maxp = 10*np.log10(np.max(abs(Pxx)))
+                    print(maxp)
+
+                    plt.specgram(buf[0:radar.N],mode="psd", NFFT=radar.STFT_nfft, scale='dB', window=np.hamming(radar.STFT_nfft),
+                                 pad_to=radar.STFT_zero_padding, detrend='mean', noverlap=radar.STFT_no_overlap,
+                                 Fs=radar.fs*radar.lamb/2,vmin=maxp-23, vmax=maxp)
+                    plt.ylim([0, 5])
+
+                    plt.show()
+                    plt.pause(0.001)
+                    if q1.qsize()>int(radar.N/radar.STFT_nfft)*radar.N :
+                        buf=[]
+                    plt.clf()
+                    print("Time for loop: " + str(time() - start_time) + " s")
+                    temp = ctr
+                    start_time = time()
+                    print(q1.qsize())
 
 class radar_params():
     def __init__(self):
-        #controlling the duration to sample for 1 DFT block
-        self.N = 4096
-        ##controlling sampling frequency of ADC
-        self.clk = 16e6
-        self.prescaler = 256
-        self.trip = 40
-        self.port = "COM4"
-        self.baudrate = 115200
-        # ADC buffer - holds N time samples sampled every  ts seconds corresponding to T duration
-        self.buffer = []
         #read settings from file
         self.read_settings()
         #calculate radar dependent parameters
@@ -91,19 +87,27 @@ class radar_params():
         #calculate axes
         self.get_axes()
 
-    def clear_buf(self):
-        self.buffer = []
+
+    def checkKey(self, dict, key):
+        if key in dict.keys():
+            return True
+        else:
+            return False
+
 
     def read_settings(self):
         with open('settings.txt') as f:
             settings_dict = json.load(f)
-        assert settings_dict["N"], "Number of time sample (N) not found in settings.txt"
-        assert settings_dict["clk"], "Arduino clock frequency (clk) not found in settings.txt"
-        assert settings_dict["prescaler"], "Arduino prescaler value not found in settings.txt"
-        assert settings_dict["trip"], "Arduino trip value (trip) not found in settings.txt"
-        assert settings_dict["f_c"], "Radar carrier frequency (f_c) not found in settings.txt"
-        assert settings_dict["port"], "Arduino Serial COM port not (port) found in settings.txt"
-        assert settings_dict["baudrate"], "Arduino Serial COM port baudrate (baudrate) not found in settings.txt"
+        assert self.checkKey(settings_dict, "N"), "Number of time sample (N) not found in settings.txt"
+        assert self.checkKey(settings_dict, "clk"), "Arduino clock frequency (clk) not found in settings.txt"
+        assert self.checkKey(settings_dict, "prescaler"), "Arduino prescaler value not found in settings.txt"
+        assert self.checkKey(settings_dict, "trip"), "Arduino trip value (trip) not found in settings.txt"
+        assert self.checkKey(settings_dict, "f_c"), "Radar carrier frequency (f_c) not found in settings.txt"
+        assert self.checkKey(settings_dict, "port"), "Arduino Serial COM port not (port) found in settings.txt"
+        assert self.checkKey(settings_dict, "baudrate"), "Arduino Serial COM port baudrate (baudrate) not found in settings.txt"
+        assert self.checkKey(settings_dict, "STFT_nfft"), "STFT Algorithm time window not set properly"
+        assert self.checkKey(settings_dict, "STFT_zero_padding"), "STFT Algorithm zero padding not set properly"
+        assert self.checkKey(settings_dict, "STFT_no_overlap"), "STFT Algorithm number of overlap time samples not set properly"
         self.N = int(settings_dict["N"])
         self.clk = float(settings_dict["clk"])
         self.prescaler = float(settings_dict["prescaler"])
@@ -113,6 +117,10 @@ class radar_params():
         self.baudrate = int(settings_dict["baudrate"])
         self.xlim = [float(f) for f in settings_dict["xlim"].split(',')]
         self.ylim = [float(f) for f in settings_dict["ylim"].split(',')]
+        self.STFT_nfft = int(settings_dict["STFT_nfft"])
+        self.STFT_zero_padding = int(settings_dict["STFT_zero_padding"])
+        self.STFT_no_overlap = int(settings_dict["STFT_no_overlap"])
+
         print("*********FILE SETTINGS********************************")
         print("N: ", self.N)
         print("clk ", self.clk)
@@ -121,7 +129,13 @@ class radar_params():
         print("port: ", self.port)
         print("xlim: ", self.xlim)
         print("ylim: ", self.ylim)
+        print("STFT_nfft: ", self.STFT_nfft)
+        print("STFT_zero_padding: ", self.STFT_zero_padding)
+        print("STFT_no_overlap: ", self.STFT_no_overlap)
+        print("hamming winndow used in STFT")
+        self.hamming = np.hamming(self.STFT_nfft)
         print("*****************************************************")
+
     def calculate_radar_params(self):
         self.fs = self.clk/(self.prescaler*self.trip)+1
         print("Sampling frequency of ADC: ", self.fs)
@@ -160,10 +174,10 @@ if __name__== '__main__':
     #initialise radar parameters from settings.txt
     radar = radar_params()
     #queue used to transfer data from p1 to p2
-    q = Queue()
+    q1 = Queue()
     # p1 is the process that reads data from Serial port and adds it to queue
-    p1 = Process(name='p1', target=readPort, args=(q, radar))
+    p1 = Process(name='p1', target=readPort, args=(q1, radar))
     # p2 is the process that gets data fom p1 and does signal processing and plotting
-    p2 = Process(name='p2', target=Plot, args=(q, radar))
+    p2 = Process(name='p2', target=Plot, args=(q1, radar))
     p1.start()
     p2.start()
