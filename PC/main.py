@@ -8,7 +8,9 @@ from multiprocessing import Process, Queue
 import numpy as np
 from time import time
 import json
-import PyQt5
+import sys
+#import PyQt5
+from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
 
 def readPort(q1,radar):
     # regex expression to read 3 or  digit numbers till \n
@@ -21,9 +23,54 @@ def readPort(q1,radar):
             #convert from string to integer
             if len(z)>0 :
               #print(z)
-              val = (5/1023)*int(z[0])
+              val = float((5/1023)*int(z[0]))
               # add to queue
               q1.put(val)
+
+def dft(buf):
+    #total number of time samples in the buffer
+    N = buf.__len__()
+    #removing DC values
+    buf = buf - np.mean(buf)
+    buf = buf/N
+    #applying the windowing function
+    samp = np.multiply(np.hamming(N), buf)
+    #zero padding and fourier transforming the samples
+    yf = np.fft.rfft(samp, n=2*N-1)
+    yf = 10*np.log10(np.abs(yf))
+    return yf
+
+def stft(buf, nfft, overlap, zp, w):
+    #total number of time samples in the buffer
+    N = buf.__len__()
+    #number of samples that are not overlapped between consecutive FFT's of size nfft
+    n = nfft-overlap
+    #starting indexs of time samples. i.e. fft is done for start_idx:start_idx+nfft
+    samp_idx = range(0, N-nfft+n, n)
+    #number of nfft sized windows in buffer with n time samples not overlapping between windows
+    t = samp_idx.__len__()
+    if (nfft+zp) % 2 == 0:
+        out = np.zeros([t, int((nfft+zp)/2+1)])
+    else:
+        out = np.zeros([t, int((nfft + zp + 1) / 2)])
+    #print(np.size(out))
+    ctr = 0
+    for i in samp_idx:
+        #window of size nfft
+        samp = buf[i:(i + nfft)]
+        #print(samp.__len__())
+        #removing DC peaks in each nfft window
+        samp = samp - np.mean(samp)
+        #applying a windowind function
+        samp = np.multiply(w, samp)
+        #print(samp.__len__())
+        #zero padding automatically happens here with zp number of zero padding
+        line = np.fft.rfft(samp/N, n=nfft+zp)
+        #print(line.__len__())
+        #magnitutde spectrum
+        out[ctr] = np.abs(line)
+        ctr = ctr + 1
+    return out.T
 
 def Plot(q1, radar):
     fig = plt.figure()
@@ -43,35 +90,49 @@ def Plot(q1, radar):
                         buf.pop(0)
                     buf.append(q1.get())
                 if (len(buf) > radar.N):
-                    # STFT algorithm
-                    plt.subplot(3,1,1)
+                    #plotting time samples
+                    plt.subplot(311)
                     plt.plot(radar.time_axis, np.array(buf[0:radar.N]))
-                    plt.grid()
+                    plt.grid(True)
+                    plt.xlabel('time (s)')
+                    plt.ylabel('Amplitude (v)')
+
                     #0 to 5 V
                     plt.ylim([0, 5])
-                    # o to buffer size in seconds
-                    plt.xlim([0, radar.ts*radar.N])
-                    plt.title("DOPPLER RADAR time domain output "+str(ctr))
-                    plt.ylabel("Amplitude (V)")
-                    plt.xlabel("time (s)")
+                    plt.xlim([0, radar.N*(1/radar.fs)])
+
+                    plt.subplot(312)
+                    yf = dft(buf[0:radar.N])
+                    plt.plot(radar.vel_axis, yf)
+                    maxp = np.max(yf)
+                    plt.plot(radar.vel_axis, (maxp - 20) * np.ones(radar.N))
+                    plt.grid(True)
+                    plt.xlabel("Velocity (m/s)")
+                    plt.ylabel("psd")
+                    #Pxx, freq= plt.psd(buf[0:radar.N], radar.N, radar.fs*radar.lamb/2, window=np.hamming(radar.N),
+                    #                   pad_to=radar.N*2, detrend='mean')
+
+                    # STFT algorithm
+                    plt.subplot(313)
+                    yf = stft(buf[0:radar.N], radar.STFT_nfft, radar.STFT_no_overlap,
+                              radar.STFT_zero_padding, np.hamming(radar.STFT_nfft))
+                    yf = 10*np.log10(yf)
+                    maxp = np.max(yf)
+                    c = plt.imshow(yf, vmin=maxp-20, vmax=maxp, origin="lower", interpolation='nearest',
+                                   extent=[0,radar.T, 0, radar.max_doppler], aspect=radar.ts/(3*radar.doppler_resolution))
+                    plt.colorbar(c)
+                    #print(np.shape(yf))
+                    plt.xlabel('time (s)')
+                    plt.ylabel('Doppler Velocity (m/s)')
+                    #plt.specgram(buf[0:radar.N],mode="psd", NFFT=radar.STFT_nfft, scale='dB', window=np.hamming(radar.STFT_nfft),
+                    #             pad_to=radar.STFT_zero_padding, detrend='mean', noverlap=radar.STFT_no_overlap,
+                    #             Fs=radar.fs*radar.lamb/2,vmin=maxp-15, vmax=maxp)
                     plt.ion()
-                    plt.show()
-                    plt.subplot(3, 1, 2)
-                    Pxx, freq= plt.psd(buf[0:radar.N], radar.N, radar.fs*radar.lamb/2,window=np.hamming(radar.N),
-                                       pad_to=radar.N*2, detrend='mean')
-                    plt.subplot(3, 1, 3)
-                    maxp = 10*np.log10(np.max(abs(Pxx)))
-                    print(maxp)
-
-                    plt.specgram(buf[0:radar.N],mode="psd", NFFT=radar.STFT_nfft, scale='dB', window=np.hamming(radar.STFT_nfft),
-                                 pad_to=radar.STFT_zero_padding, detrend='mean', noverlap=radar.STFT_no_overlap,
-                                 Fs=radar.fs*radar.lamb/2,vmin=maxp-23, vmax=maxp)
-                    plt.ylim([0, 5])
-
+                    plt.tight_layout()
                     plt.show()
                     plt.pause(0.001)
                     if q1.qsize()>int(radar.N/radar.STFT_nfft)*radar.N :
-                        buf=[]
+                        buf = []
                     plt.clf()
                     print("Time for loop: " + str(time() - start_time) + " s")
                     temp = ctr
@@ -166,8 +227,9 @@ class radar_params():
 
     def get_axes(self):
         self.time_axis = np.linspace(0, self.T - self.ts, self.N)
-        self.freq_axis = np.linspace(-self.fs / 2, self.fs / 2 - self.delta_f, self.N)
-        self.vel_axis = self.c * self.freq_axis / (2 * self.f_c)
+        #only real spectrum from 0 to fs/2
+        self.freq_axis = np.linspace(0, self.fs / 2 - self.delta_f, self.N)
+        self.vel_axis = self.freq_axis * self.lamb / 2
 
 
 if __name__== '__main__':

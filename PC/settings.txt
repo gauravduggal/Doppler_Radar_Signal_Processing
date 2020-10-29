@@ -1,2 +1,2 @@
-{"N": "2048", "f_c": "3.101e9", "clk": "16e6", "prescaler": "256", "trip": "40", "port": "COM4", "baudrate": "115200",
-"xlim":"0,5", "ylim":"-0.5,15", "STFT_nfft" : "128", "STFT_zero_padding":"256", "STFT_no_overlap": "120"}
+{"N": "512", "f_c": "3.101e9", "clk": "16e6", "prescaler": "256", "trip": "10", "port": "COM4", "baudrate": "115200",
+"xlim":"0,5", "ylim":"-0.5,15", "STFT_nfft" : "32", "STFT_zero_padding":"32", "STFT_no_overlap": "31"}
