@@ -1,9 +1,12 @@
 # Doppler_Radar_RCWL-0516 Signal Processing
+
+Video demonstration: https://www.youtube.com/watch?v=F98WkdnYbrQ&ab_channel=GauravDuggal
+
  Example output of a spectrogram while looking at a rotating fan:
  
 ![Test Image 1](https://github.com/mimeakadug/Doppler_Radar_RCWL-0516/blob/main/STFT_psd_td_fan.png)
 
-Video demonstration: https://www.youtube.com/watch?v=F98WkdnYbrQ&ab_channel=GauravDuggal
+
 
 Hypothesis -> 18 peaks in 1.2 seconds -> 15 peaks in 1 second -> 5 revolution per second (divide by 3 fan blades) -> 900 rpm which is approximately how fast a ceiling fan rotates at full speed.
  
